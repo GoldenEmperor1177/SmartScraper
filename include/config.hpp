@@ -43,6 +43,7 @@ struct Config {
     std::string            server_domain;
     std::vector<ServerKey> server_keys;
     Limits                 limits;
+    bool                   cache_enabled    = true;
 };
 
 // ── Paths ─────────────────────────────────────────────────────────────────────

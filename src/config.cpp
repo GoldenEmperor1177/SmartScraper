@@ -56,6 +56,7 @@ Config load_config() {
             cfg.server_port   = sv.value("port",   8766);
             cfg.server_host   = sv.value("host",   "0.0.0.0");
             cfg.server_domain = sv.value("domain", "");
+            cfg.cache_enabled = sv.value("cache_enabled", true);
 
             for (auto& k : sv.value("keys", json::array())) {
                 ServerKey sk;
@@ -102,10 +103,11 @@ void save_config(const Config& cfg) {
         skeys.push_back({{"id", k.id}, {"key", k.key}, {"label", k.label}});
 
     j["server"] = {
-        {"port",   cfg.server_port},
-        {"host",   cfg.server_host},
-        {"domain", cfg.server_domain},
-        {"keys",   skeys}
+        {"port",          cfg.server_port},
+        {"host",          cfg.server_host},
+        {"domain",        cfg.server_domain},
+        {"keys",          skeys},
+        {"cache_enabled", cfg.cache_enabled}
     };
 
     std::ofstream f(path);

@@ -635,10 +635,21 @@ static void cmd_cache(int argc, char** argv) {
         }
         std::cout << "Cache: " << count << " report(s), "
                   << (total / 1024) << " KB\n";
+    } else if (sub == "on" || sub == "off") {
+        auto cfg = load_config();
+        cfg.cache_enabled = (sub == "on");
+        save_config(cfg);
+        std::cout << "[rp] Cache " << (cfg.cache_enabled ? "enabled" : "disabled") << ".\n";
+    } else if (sub == "status") {
+        auto cfg = load_config();
+        std::cout << "Cache: " << (cfg.cache_enabled ? "enabled" : "disabled") << "\n";
     } else {
         std::cout << "Usage:\n"
+                  << "  rp cache on       enable report caching (default)\n"
+                  << "  rp cache off      disable report caching\n"
+                  << "  rp cache status   show whether caching is on or off\n"
                   << "  rp cache clear    delete all cached reports\n"
-                  << "  rp cache size     show number of reports and disk usage\n";
+                  << "  rp cache size     show report count and disk usage\n";
     }
 }
 
@@ -786,8 +797,11 @@ static void print_help() {
   REPORT CACHE
     rp --list-reports                list cached reports
     rp --show-report <id>            print a cached report by id
+    rp cache on                      enable report caching (default)
+    rp cache off                     disable report caching
+    rp cache status                  show whether caching is on or off
     rp cache clear                   delete all cached reports
-    rp cache size                    show cache disk usage
+    rp cache size                    show report count and disk usage
 
   SERVER
     rp start                         start HTTP API server (daemonises)
@@ -836,6 +850,7 @@ int main(int argc, char** argv) {
     agent.ss_max   = cfg.limits.ss_max;
     agent.fc_min   = cfg.limits.fc_min;
     agent.fc_max   = cfg.limits.fc_max;
+    agent.use_cache = cfg.cache_enabled;
 
     std::vector<std::string> parts;
     std::string out_file;
