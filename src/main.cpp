@@ -15,6 +15,8 @@
 #include <iomanip>
 #include <chrono>
 #include <sys/types.h>
+#include <unistd.h>
+#include <cstdlib>
 #include <signal.h>
 
 namespace fs = std::filesystem;
@@ -611,6 +613,87 @@ static void cmd_stop() {
     else std::cerr << "[rp] Failed to stop pid " << pid << "\n";
 }
 
+// ── rp cache ─────────────────────────────────────────────────────────────────
+
+static void cmd_cache(int argc, char** argv) {
+    std::string sub = (argc >= 3) ? argv[2] : "";
+    if (sub == "clear") {
+        auto dir = reports_dir();
+        if (!fs::exists(dir)) { std::cout << "[rp] Cache is already empty.\n"; return; }
+        int count = 0;
+        for (auto& p : fs::directory_iterator(dir)) {
+            if (p.path().extension() == ".json") { fs::remove(p.path()); count++; }
+        }
+        std::cout << "[rp] Cleared " << count << " cached report(s).\n";
+    } else if (sub == "size") {
+        auto dir = reports_dir();
+        if (!fs::exists(dir)) { std::cout << "Cache: 0 reports\n"; return; }
+        int count = 0;
+        uintmax_t total = 0;
+        for (auto& p : fs::directory_iterator(dir)) {
+            if (p.path().extension() == ".json") { count++; total += fs::file_size(p.path()); }
+        }
+        std::cout << "Cache: " << count << " report(s), "
+                  << (total / 1024) << " KB\n";
+    } else {
+        std::cout << "Usage:\n"
+                  << "  rp cache clear    delete all cached reports\n"
+                  << "  rp cache size     show number of reports and disk usage\n";
+    }
+}
+
+// ── rp update ────────────────────────────────────────────────────────────────
+
+static void cmd_update() {
+    // Find where the binary was installed from (the repo dir)
+    // We look for the repo by checking known relative paths from the binary
+    // Strategy: use the GitHub repo directly — clone fresh to /tmp, build, install
+    std::cout << "[rp] Checking for updates from GitHub...\n\n";
+
+    bool server_was_running = is_our_server(read_pid());
+    if (server_was_running) {
+        std::cout << "[rp] Stopping server for update...\n";
+        int pid = read_pid();
+        kill(pid, SIGTERM);
+        std::remove(PID_FILE);
+        sleep(1);
+    }
+
+    const char* tmp_dir = "/tmp/smartscraper_update";
+    std::string clone_cmd  = std::string("rm -rf ") + tmp_dir +
+                             " && git clone --depth=1 https://github.com/GoldenEmperor1177/SmartScraper " + tmp_dir;
+    std::string build_cmd  = std::string("cmake -S ") + tmp_dir + " -B " + tmp_dir + "/build"
+                             " -DCMAKE_BUILD_TYPE=Release -Wno-dev"
+                             " && cmake --build " + tmp_dir + "/build --parallel $(nproc)";
+    std::string install_cmd = std::string("cmake --install ") + tmp_dir + "/build";
+    std::string cleanup_cmd = std::string("rm -rf ") + tmp_dir;
+
+    std::cout << "[rp] Cloning latest version...\n";
+    if (std::system(clone_cmd.c_str()) != 0) {
+        std::cerr << "[rp] Clone failed. Check your internet connection.\n"; return;
+    }
+
+    std::cout << "\n[rp] Building...\n";
+    if (std::system(build_cmd.c_str()) != 0) {
+        std::cerr << "[rp] Build failed.\n"; (void)std::system(cleanup_cmd.c_str()); return;
+    }
+
+    std::cout << "\n[rp] Installing...\n";
+    // Need sudo if not root
+    std::string inst = (getuid() == 0) ? install_cmd : "sudo " + install_cmd;
+    if (std::system(inst.c_str()) != 0) {
+        std::cerr << "[rp] Install failed.\n"; (void)std::system(cleanup_cmd.c_str()); return;
+    }
+
+    (void)std::system(cleanup_cmd.c_str());
+    std::cout << "\n[rp] Update complete. ✓\n";
+
+    if (server_was_running) {
+        std::cout << "[rp] Restarting server...\n";
+        (void)std::system("rp start");
+    }
+}
+
 // ── rp --list-reports / --show-report ────────────────────────────────────────
 
 static void cmd_list_reports() {
@@ -703,10 +786,13 @@ static void print_help() {
   REPORT CACHE
     rp --list-reports                list cached reports
     rp --show-report <id>            print a cached report by id
+    rp cache clear                   delete all cached reports
+    rp cache size                    show cache disk usage
 
   SERVER
-    rp start                         start API server
+    rp start                         start HTTP API server (daemonises)
     rp stop                          stop API server
+    rp update                        pull latest from GitHub, rebuild, reinstall
 
 )";
 }
@@ -726,6 +812,8 @@ int main(int argc, char** argv) {
     if (cmd == "status")                     { cmd_status();           return 0; }
     if (cmd == "start")                      { cmd_start();            return 0; }
     if (cmd == "stop")                       { cmd_stop();             return 0; }
+    if (cmd == "update")                     { cmd_update();           return 0; }
+    if (cmd == "cache")                      { cmd_cache(argc, argv);  return 0; }
     if (cmd == "--list-reports")             { cmd_list_reports();     return 0; }
     if (cmd == "--show-report" && argc >= 3) { cmd_show_report(argv[2]); return 0; }
     if (cmd == "-h" || cmd == "-help" || cmd == "--help" || cmd == "help") { print_help(); return 0; }
