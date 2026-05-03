@@ -20,6 +20,10 @@ fs::path reports_dir() {
     return config_path().parent_path() / "reports";
 }
 
+fs::path log_path() {
+    return config_path().parent_path() / "server.log";
+}
+
 // ── Load / save ───────────────────────────────────────────────────────────────
 
 Config load_config() {

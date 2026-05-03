@@ -613,6 +613,33 @@ static void cmd_stop() {
     else std::cerr << "[rp] Failed to stop pid " << pid << "\n";
 }
 
+// ── rp logs ──────────────────────────────────────────────────────────────────
+
+static void cmd_logs(int argc, char** argv) {
+    auto lp = log_path();
+    std::string sub = (argc >= 3) ? argv[2] : "";
+
+    if (sub == "clear") {
+        if (!fs::exists(lp)) { std::cout << "[rp] Log is already empty.\n"; return; }
+        std::ofstream(lp, std::ios::trunc);
+        std::cout << "[rp] Log cleared.\n";
+        return;
+    }
+
+    if (sub == "-f" || sub == "--follow") {
+        if (!fs::exists(lp)) { std::cout << "[rp] No log file yet. Start the server first.\n"; return; }
+        // Print last 20 lines then follow
+        std::system(("tail -n 20 -f " + lp.string()).c_str());
+        return;
+    }
+
+    // Default: print last 50 lines
+    if (!fs::exists(lp)) { std::cout << "[rp] No log file yet. Start the server first.\n"; return; }
+    int n = 50;
+    if (!sub.empty()) { try { n = std::stoi(sub); } catch (...) {} }
+    std::system(("tail -n " + std::to_string(n) + " " + lp.string()).c_str());
+}
+
 // ── rp cache ─────────────────────────────────────────────────────────────────
 
 static void cmd_cache(int argc, char** argv) {
@@ -807,6 +834,10 @@ static void print_help() {
     rp start                         start HTTP API server (daemonises)
     rp stop                          stop API server
     rp update                        pull latest from GitHub, rebuild, reinstall
+    rp logs                          show last 50 server log lines
+    rp logs <n>                      show last N lines
+    rp logs -f                       follow log live (Ctrl+C to stop)
+    rp logs clear                    wipe the log file
 
 )";
 }
@@ -828,6 +859,7 @@ int main(int argc, char** argv) {
     if (cmd == "stop")                       { cmd_stop();             return 0; }
     if (cmd == "update")                     { cmd_update();           return 0; }
     if (cmd == "cache")                      { cmd_cache(argc, argv);  return 0; }
+    if (cmd == "logs")                       { cmd_logs(argc, argv);   return 0; }
     if (cmd == "--list-reports")             { cmd_list_reports();     return 0; }
     if (cmd == "--show-report" && argc >= 3) { cmd_show_report(argv[2]); return 0; }
     if (cmd == "-h" || cmd == "-help" || cmd == "--help" || cmd == "help") { print_help(); return 0; }

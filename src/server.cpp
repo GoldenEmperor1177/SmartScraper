@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <chrono>
+#include <iomanip>
 #include <string>
 #include <map>
 #include <vector>
@@ -37,6 +39,18 @@ static void sigterm_handler(int) { g_shutdown = 1; }
 static void write_pid(pid_t p) {
     FILE* f = fopen(PID_FILE, "w");
     if (f) { fprintf(f, "%d\n", p); fclose(f); }
+}
+
+// ── Logger ────────────────────────────────────────────────────────────────────
+
+static void slog(const std::string& msg) {
+    auto now = std::chrono::system_clock::now();
+    auto t   = std::chrono::system_clock::to_time_t(now);
+    std::ofstream f(log_path(), std::ios::app);
+    if (!f) return;
+    char ts[32];
+    std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", std::gmtime(&t));
+    f << "[" << ts << "] " << msg << "\n";
 }
 
 // ── Socket helpers ────────────────────────────────────────────────────────────
@@ -234,11 +248,14 @@ static void handle_report(int fd, const Request& req) {
     Config cfg = load_config();
     auto agent = make_agent_cfg(cfg);
     if (agent.api_key.empty()) {
+        slog("500 no API key configured");
         send_json(fd, 500, {{"error", "no API key configured"}});
         return;
     }
 
+    slog("REPORT START query=\"" + query.substr(0, 80) + (query.size() > 80 ? "..." : "") + "\" format=" + format);
     std::string report = reportmaker::run_report(query, agent);
+    slog("REPORT DONE " + std::to_string(report.size()) + " bytes");
 
     if (format == "pdf") {
         auto pdf_bytes = render_pdf(report);
@@ -256,9 +273,12 @@ static void handle_report(int fd, const Request& req) {
 static void handle_request(int fd) {
     Request req;
     if (!parse_request(fd, req)) {
+        slog("400 BAD REQUEST (parse failed)");
         send_json(fd, 400, {{"error", "bad request"}});
         return;
     }
+
+    slog(req.method + " " + req.path);
 
     // Health — unauthenticated
     if (req.method == "GET" && req.path == "/health") {
@@ -269,10 +289,12 @@ static void handle_request(int fd) {
     // All other routes require a server key
     Config cfg = load_config();
     if (cfg.server_keys.empty()) {
+        slog("401 no server keys configured");
         send_json(fd, 401, {{"error", "no server keys configured — run: rp skey new"}});
         return;
     }
     if (!authenticate(req, cfg)) {
+        slog("401 Unauthorized");
         send_json(fd, 401, {{"error", "Unauthorized"}});
         return;
     }
@@ -282,6 +304,7 @@ static void handle_request(int fd) {
         return;
     }
 
+    slog("404 " + req.method + " " + req.path);
     send_json(fd, 404, {{"error", "not found"}});
 }
 
@@ -315,6 +338,7 @@ static void server_loop(int server_fd) {
 
     close(server_fd);
     std::remove(PID_FILE);
+    slog("Server stopped.");
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -349,17 +373,23 @@ void run_server_daemon() {
     if (pid2 > 0) _exit(0);  // First child exits, orphaning the grandchild
 
     // Grandchild: full daemon
-    if (chdir("/") != 0) {}  // daemon cwd reset, ignore error
+    if (chdir("/") != 0) {}
     umask(0);
-    int devnull = open("/dev/null", O_RDWR);
-    if (devnull >= 0) {
-        dup2(devnull, STDIN_FILENO);
-        dup2(devnull, STDOUT_FILENO);
-        dup2(devnull, STDERR_FILENO);
-        if (devnull > 2) close(devnull);
+
+    // stdin → /dev/null, stdout+stderr → log file
+    int devnull = open("/dev/null", O_RDONLY);
+    if (devnull >= 0) { dup2(devnull, STDIN_FILENO); close(devnull); }
+
+    std::string lp = log_path().string();
+    int logfd = open(lp.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logfd >= 0) {
+        dup2(logfd, STDOUT_FILENO);
+        dup2(logfd, STDERR_FILENO);
+        close(logfd);
     }
 
     write_pid(getpid());
+    slog("Server started on " + cfg.server_host + ":" + std::to_string(cfg.server_port));
     server_loop(server_fd);
     _exit(0);
 }
