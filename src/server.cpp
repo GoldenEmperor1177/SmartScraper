@@ -216,11 +216,12 @@ static reportmaker::AgentConfig make_agent_cfg(const Config& cfg) {
         a.api_key  = pair->key;
         a.model    = pair->model;
     }
-    a.ss_min = cfg.limits.ss_min;
-    a.ss_max = cfg.limits.ss_max;
-    a.fc_min = cfg.limits.fc_min;
-    a.fc_max = cfg.limits.fc_max;
-    a.verbose = false;
+    a.ss_min    = cfg.limits.ss_min;
+    a.ss_max    = cfg.limits.ss_max;
+    a.fc_min    = cfg.limits.fc_min;
+    a.fc_max    = cfg.limits.fc_max;
+    a.use_cache = cfg.cache_enabled;
+    a.verbose   = false;
     return a;
 }
 
