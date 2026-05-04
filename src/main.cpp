@@ -1,3 +1,5 @@
+#define APP_VERSION "1.0.6"
+
 #include "config.hpp"
 #include "dns.hpp"
 #include "http_client.hpp"
@@ -613,6 +615,13 @@ static void cmd_stop() {
     else std::cerr << "[rp] Failed to stop pid " << pid << "\n";
 }
 
+// ── shell helper (silences warn_unused_result on std::system) ─────────────────
+
+static int run(const std::string& cmd) {
+    int r = std::system(cmd.c_str());
+    return r;
+}
+
 // ── rp logs ──────────────────────────────────────────────────────────────────
 
 static void cmd_logs(int argc, char** argv) {
@@ -629,7 +638,7 @@ static void cmd_logs(int argc, char** argv) {
     if (sub == "-f" || sub == "--follow") {
         if (!fs::exists(lp)) { std::cout << "[rp] No log file yet. Start the server first.\n"; return; }
         // Print last 20 lines then follow
-        std::system(("tail -n 20 -f " + lp.string()).c_str());
+        run("tail -n 20 -f " + lp.string());
         return;
     }
 
@@ -637,7 +646,7 @@ static void cmd_logs(int argc, char** argv) {
     if (!fs::exists(lp)) { std::cout << "[rp] No log file yet. Start the server first.\n"; return; }
     int n = 50;
     if (!sub.empty()) { try { n = std::stoi(sub); } catch (...) {} }
-    std::system(("tail -n " + std::to_string(n) + " " + lp.string()).c_str());
+    run("tail -n " + std::to_string(n) + " " + lp.string());
 }
 
 // ── rp cache ─────────────────────────────────────────────────────────────────
@@ -707,28 +716,27 @@ static void cmd_update() {
     std::string cleanup_cmd = std::string("rm -rf ") + tmp_dir;
 
     std::cout << "[rp] Cloning latest version...\n";
-    if (std::system(clone_cmd.c_str()) != 0) {
+    if (run(clone_cmd) != 0) {
         std::cerr << "[rp] Clone failed. Check your internet connection.\n"; return;
     }
 
     std::cout << "\n[rp] Building...\n";
-    if (std::system(build_cmd.c_str()) != 0) {
-        std::cerr << "[rp] Build failed.\n"; (void)std::system(cleanup_cmd.c_str()); return;
+    if (run(build_cmd) != 0) {
+        std::cerr << "[rp] Build failed.\n"; run(cleanup_cmd); return;
     }
 
     std::cout << "\n[rp] Installing...\n";
-    // Need sudo if not root
     std::string inst = (getuid() == 0) ? install_cmd : "sudo " + install_cmd;
-    if (std::system(inst.c_str()) != 0) {
-        std::cerr << "[rp] Install failed.\n"; (void)std::system(cleanup_cmd.c_str()); return;
+    if (run(inst) != 0) {
+        std::cerr << "[rp] Install failed.\n"; run(cleanup_cmd); return;
     }
 
-    (void)std::system(cleanup_cmd.c_str());
-    std::cout << "\n[rp] Update complete. ✓\n";
+    run(cleanup_cmd);
+    std::cout << "\n[rp] Updated to v" APP_VERSION ". ✓\n";
 
     if (server_was_running) {
         std::cout << "[rp] Restarting server...\n";
-        (void)std::system("rp start");
+        run("rp start");
     }
 }
 
@@ -831,6 +839,7 @@ static void print_help() {
     rp cache size                    show report count and disk usage
 
   SERVER
+    rp --version                     show version
     rp start                         start HTTP API server (daemonises)
     rp stop                          stop API server
     rp update                        pull latest from GitHub, rebuild, reinstall
@@ -863,6 +872,9 @@ int main(int argc, char** argv) {
     if (cmd == "--list-reports")             { cmd_list_reports();     return 0; }
     if (cmd == "--show-report" && argc >= 3) { cmd_show_report(argv[2]); return 0; }
     if (cmd == "-h" || cmd == "-help" || cmd == "--help" || cmd == "help") { print_help(); return 0; }
+    if (cmd == "--version" || cmd == "-v" || cmd == "version") {
+        std::cout << "rp v" APP_VERSION "\n"; return 0;
+    }
 
     // Catch unrecognised bare words that look like commands (no spaces, no flags)
     // A query must start with a flag (--quiet etc.) or be quoted (single argv token with spaces
