@@ -864,6 +864,15 @@ int main(int argc, char** argv) {
     if (cmd == "--show-report" && argc >= 3) { cmd_show_report(argv[2]); return 0; }
     if (cmd == "-h" || cmd == "-help" || cmd == "--help" || cmd == "help") { print_help(); return 0; }
 
+    // Catch unrecognised bare words that look like commands (no spaces, no flags)
+    // A query must start with a flag (--quiet etc.) or be quoted (single argv token with spaces
+    // is fine), but a bare single word that matches nothing is almost certainly a typo.
+    if (argc == 2 && cmd.find(' ') == std::string::npos && cmd.rfind("--", 0) != 0) {
+        std::cerr << "[rp] Unknown command: " << cmd << "\n"
+                  << "     Try: rp --help\n";
+        return 1;
+    }
+
     // Report generation — everything else is treated as a query
     auto cfg = load_config();
     auto pair = active_main_pair(cfg);
@@ -896,18 +905,26 @@ int main(int argc, char** argv) {
         else if (a == "--max-iters" && i+1 < argc) agent.max_iterations = std::stoi(argv[++i]);
         else if (a == "--out"       && i+1 < argc) out_file             = argv[++i];
         else if (a == "--pdf"       && i+1 < argc) pdf_file             = argv[++i];
-        else if (a.rfind("--", 0) != 0)            parts.push_back(a);
+        else if (a == "--list-reports" || a == "--show-report") {
+            // already handled above, skip here
+        } else if (a.rfind("--", 0) == 0) {
+            std::cerr << "[rp] Unknown flag: " << a << "\n"
+                      << "     Try: rp --help\n";
+            return 1;
+        } else {
+            parts.push_back(a);
+        }
     }
 
-    if (parts.empty()) { print_help(); return 1; }
+    if (parts.empty()) {
+        std::cerr << "[rp] No query provided. Wrap your query in quotes: rp \"your question\"\n"
+                  << "     Try: rp --help\n";
+        return 1;
+    }
 
     std::string query;
     for (size_t i = 0; i < parts.size(); ++i) { if (i) query += ' '; query += parts[i]; }
 
-    if (query.empty()) {
-        std::cerr << "[rp] No query provided. Usage: rp \"your question\"\n";
-        return 1;
-    }
 
     std::string report = reportmaker::run_report(query, agent);
 
