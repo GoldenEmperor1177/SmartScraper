@@ -1,4 +1,4 @@
-#define APP_VERSION "1.0.6"
+#define APP_VERSION "1.0.7"
 
 #include "config.hpp"
 #include "dns.hpp"
@@ -531,6 +531,53 @@ static void cmd_config(bool reveal) {
     std::cout << "\n";
 }
 
+// ── autostart helpers (needed by cmd_status and cmd_autostart) ───────────────
+
+static std::string systemd_unit_dir() {
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    std::string base = xdg ? xdg : (std::string(std::getenv("HOME") ? std::getenv("HOME") : "") + "/.config");
+    return base + "/systemd/user";
+}
+
+static std::string systemd_unit_path() {
+    return systemd_unit_dir() + "/smartscraper.service";
+}
+
+static bool systemctl_available() {
+    return std::system("systemctl --user --version >/dev/null 2>&1") == 0;
+}
+
+static std::string autostart_state() {
+    FILE* fp = popen("systemctl --user is-enabled smartscraper 2>/dev/null", "r");
+    if (!fp) return "unknown";
+    char buf[32] = {};
+    if (fgets(buf, sizeof(buf), fp)) {}
+    pclose(fp);
+    std::string s(buf);
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
+    return s.empty() ? "unknown" : s;
+}
+
+static void write_unit_file() {
+    std::string dir = systemd_unit_dir();
+    fs::create_directories(dir);
+    std::string home = std::getenv("HOME") ? std::getenv("HOME") : "";
+    std::string log  = home + "/.smartscraper/server.log";
+    std::ofstream f(systemd_unit_path());
+    f << "[Unit]\n"
+      << "Description=SmartScraper API Server (rp)\n"
+      << "After=network.target\n\n"
+      << "[Service]\n"
+      << "Type=simple\n"
+      << "ExecStart=/usr/local/bin/rp _serve\n"
+      << "Restart=on-failure\n"
+      << "RestartSec=5\n"
+      << "StandardOutput=append:" << log << "\n"
+      << "StandardError=append:"  << log << "\n\n"
+      << "[Install]\n"
+      << "WantedBy=default.target\n";
+}
+
 // ── rp status ─────────────────────────────────────────────────────────────────
 
 static void cmd_status() {
@@ -543,7 +590,14 @@ static void cmd_status() {
     int pid = read_pid();
     std::cout << "  API server   " << tick(is_our_server(pid));
     if (is_our_server(pid)) std::cout << "  pid=" << pid << "  http://localhost:" << cfg.server_port << "\n";
-    else                 std::cout << "  stopped  (rp start)\n";
+    else                    std::cout << "  stopped  (rp start)\n";
+
+    // Autostart
+    std::string as = autostart_state();
+    bool as_en = (as == "enabled");
+    std::cout << "  Autostart    " << tick(as_en) << "  " << as;
+    if (!as_en) std::cout << "  (rp autostart enable)";
+    std::cout << "\n";
 
     // Active LLM
     std::cout << "\n  Main LLM (report writer)\n";
@@ -613,6 +667,64 @@ static void cmd_stop() {
     if (!is_our_server(pid)) { std::cout << "[rp] Not running.\n"; std::remove(PID_FILE); return; }
     if (kill(pid, SIGTERM) == 0) { std::cout << "[rp] Stopped (pid " << pid << ").\n"; std::remove(PID_FILE); }
     else std::cerr << "[rp] Failed to stop pid " << pid << "\n";
+}
+
+// ── rp autostart ─────────────────────────────────────────────────────────────
+
+static int run(const std::string&);  // forward declaration — defined below
+
+static void cmd_autostart(int argc, char** argv) {
+    std::string sub = (argc >= 3) ? argv[2] : "status";
+
+    if (!systemctl_available()) {
+        std::cerr << "[rp] systemd not available on this system.\n";
+        return;
+    }
+
+    if (sub == "enable") {
+        write_unit_file();
+        std::cout << "[rp] Unit file written: " << systemd_unit_path() << "\n";
+        run("systemctl --user daemon-reload");
+        int r = run("systemctl --user enable --now smartscraper");
+        if (r == 0)
+            std::cout << "[rp] Autostart enabled — server will start on login and is running now.\n";
+        else
+            std::cerr << "[rp] systemctl enable returned non-zero. Check: journalctl --user -u smartscraper\n";
+        return;
+    }
+
+    if (sub == "disable") {
+        int r = run("systemctl --user disable --now smartscraper");
+        if (r == 0)
+            std::cout << "[rp] Autostart disabled — server stopped and will not start on login.\n";
+        else
+            std::cerr << "[rp] systemctl disable returned non-zero.\n";
+        return;
+    }
+
+    if (sub == "status") {
+        std::string enabled = autostart_state();
+        FILE* fp = popen("systemctl --user is-active smartscraper 2>/dev/null", "r");
+        char buf[32] = {};
+        if (fp) { if (fgets(buf, sizeof(buf), fp)) {} pclose(fp); }
+        std::string active(buf);
+        while (!active.empty() && (active.back() == '\n' || active.back() == '\r' || active.back() == ' '))
+            active.pop_back();
+        if (active.empty()) active = "unknown";
+
+        bool en = (enabled == "enabled");
+        bool ac = (active  == "active");
+        std::cout << "\n  Autostart status\n";
+        std::cout << "  ─────────────────────────────────────────\n";
+        std::cout << "  Enabled : " << tick(en) << "  " << enabled << "\n";
+        std::cout << "  Active  : " << tick(ac) << "  " << active  << "\n";
+        if (!en) std::cout << "\n  Run: rp autostart enable\n";
+        std::cout << "\n";
+        return;
+    }
+
+    std::cerr << "[rp] Unknown autostart subcommand: " << sub << "\n"
+              << "     Usage: rp autostart enable | disable | status\n";
 }
 
 // ── shell helper (silences warn_unused_result on std::system) ─────────────────
@@ -848,6 +960,11 @@ static void print_help() {
     rp logs -f                       follow log live (Ctrl+C to stop)
     rp logs clear                    wipe the log file
 
+  AUTOSTART (systemd)
+    rp autostart enable              install systemd unit + enable + start now
+    rp autostart disable             disable + stop the systemd unit
+    rp autostart status              show enabled/active state
+
 )";
 }
 
@@ -866,6 +983,8 @@ int main(int argc, char** argv) {
     if (cmd == "status")                     { cmd_status();           return 0; }
     if (cmd == "start")                      { cmd_start();            return 0; }
     if (cmd == "stop")                       { cmd_stop();             return 0; }
+    if (cmd == "_serve")                     { run_server_foreground(); return 0; }
+    if (cmd == "autostart")                  { cmd_autostart(argc, argv); return 0; }
     if (cmd == "update")                     { cmd_update();           return 0; }
     if (cmd == "cache")                      { cmd_cache(argc, argv);  return 0; }
     if (cmd == "logs")                       { cmd_logs(argc, argv);   return 0; }

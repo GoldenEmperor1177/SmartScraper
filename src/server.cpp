@@ -342,7 +342,23 @@ static void server_loop(int server_fd) {
     slog("Server stopped.");
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public entry points ───────────────────────────────────────────────────────
+
+void run_server_foreground() {
+    Config cfg = load_config();
+
+    int server_fd = bind_server_socket(cfg.server_host, cfg.server_port);
+    if (server_fd < 0) {
+        std::cerr << "[rp] Failed to bind " << cfg.server_host << ":" << cfg.server_port
+                  << " — " << strerror(errno) << "\n";
+        return;
+    }
+
+    write_pid(getpid());
+    slog("Server started (foreground) on " + cfg.server_host + ":" + std::to_string(cfg.server_port));
+    std::cout << "[rp] Server running on " << cfg.server_host << ":" << cfg.server_port << "\n";
+    server_loop(server_fd);
+}
 
 void run_server_daemon() {
     Config cfg = load_config();

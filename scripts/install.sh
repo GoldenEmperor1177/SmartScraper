@@ -116,21 +116,23 @@ if command -v systemctl &>/dev/null; then
     mkdir -p "$SYSTEMD_DIR"
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=SmartScraper API Server
+Description=SmartScraper API Server (rp)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_BIN start
+ExecStart=$INSTALL_BIN _serve
 Restart=on-failure
 RestartSec=5
+StandardOutput=append:$HOME/.smartscraper/server.log
+StandardError=append:$HOME/.smartscraper/server.log
 
 [Install]
 WantedBy=default.target
 EOF
     systemctl --user daemon-reload 2>/dev/null || true
     echo "  ✓  Systemd service: $SERVICE_FILE"
-    echo "     Enable at boot:  systemctl --user enable smartscraper"
+    echo "     Enable autostart: rp autostart enable"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
