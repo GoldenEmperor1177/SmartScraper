@@ -1,8 +1,8 @@
 # SmartScraper
 
-AI-powered research report tool. Give it a query, it searches five sources, runs a grounded agentic loop against a DeepSeek-compatible LLM, and produces a sourced markdown report.
+AI-powered research report tool. Give it a query, it searches the open web, runs a grounded agentic loop against a DeepSeek-compatible LLM, and produces a sourced markdown report.
 
-**Sources:** DuckDuckGo · Wikipedia · HackerNews · StackExchange · arXiv — all keyless, no dashboards.
+**Search:** DuckDuckGo (worldwide) — indexes the open web including news, market reports, industry blogs, and reference pages. No API key required.
 
 ---
 
