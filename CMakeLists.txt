@@ -34,6 +34,7 @@ set(SOURCES
     src/dns.cpp
     src/http_client.cpp
     src/reportmaker/budget.cpp
+    src/reportmaker/stats.cpp
     src/reportmaker/tools.cpp
     src/reportmaker/agent.cpp
     src/server.cpp

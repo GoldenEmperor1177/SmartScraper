@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "config.hpp"
 #include "reportmaker/agent.hpp"
+#include "reportmaker/stats.hpp"
 #include "pdf_writer.hpp"
 #include <nlohmann/json.hpp>
 
@@ -302,6 +303,12 @@ static void handle_request(int fd) {
 
     if (req.method == "POST" && req.path == "/report") {
         handle_report(fd, req);
+        return;
+    }
+
+    if (req.method == "GET" && req.path == "/stats") {
+        slog("GET /stats");
+        send_json(fd, 200, reportmaker::ServerStats::get().to_json());
         return;
     }
 

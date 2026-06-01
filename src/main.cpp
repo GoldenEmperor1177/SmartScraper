@@ -4,6 +4,7 @@
 #include "dns.hpp"
 #include "http_client.hpp"
 #include "reportmaker/agent.hpp"
+#include "reportmaker/stats.hpp"
 #include "server.hpp"
 #include "pdf_writer.hpp"
 #include <nlohmann/json.hpp>
@@ -896,6 +897,86 @@ static void cmd_show_report(const std::string& id) {
               << j.value("final_report","") << "\n";
 }
 
+// ── rp stats ─────────────────────────────────────────────────────────────────
+
+static std::string bar(double pct, int width = 10) {
+    int filled = std::min(width, (int)(pct / 100.0 * width + 0.5));
+    std::string b = "[";
+    for (int i = 0; i < width; ++i) b += (i < filled ? "█" : "░");
+    b += "]";
+    return b;
+}
+
+static std::string format_uptime(int64_t sec) {
+    int d = sec / 86400; sec %= 86400;
+    int h = sec / 3600;  sec %= 3600;
+    int m = sec / 60;    int s = sec % 60;
+    std::ostringstream o;
+    if (d) o << d << "d ";
+    if (d || h) o << h << "h ";
+    o << m << "m " << s << "s";
+    return o.str();
+}
+
+static void cmd_stats() {
+    // Read from the stats file (populated by the running server or last CLI run).
+    json j = reportmaker::load_stats_file();
+
+    if (j.empty()) {
+        std::cout << "\n  No stats yet — run a report first, or start the server.\n\n";
+        return;
+    }
+
+    std::cout << "\n  Source Usage & Rate Limits\n";
+    std::cout << "  ─────────────────────────────────────────────────────────────────────\n";
+    std::cout << std::left
+              << "  " << std::setw(16) << "Source"
+              << std::setw(9)  << "Window"
+              << std::setw(8)  << "Used"
+              << std::setw(8)  << "Limit"
+              << std::setw(14) << "Usage"
+              << "Note\n";
+    std::cout << "  " << std::string(65, '-') << "\n";
+
+    if (j.contains("sources")) {
+        for (auto& [name, meta] : reportmaker::source_meta_list()) {
+            if (!j["sources"].contains(name)) continue;
+            auto& s = j["sources"][name];
+            int    used  = s.value("used_in_window", 0);
+            int    limit = s.value("limit", 1);
+            double pct   = s.value("pct", 0.0);
+            std::string wlabel = "/" + s.value("window_label", "?");
+            std::string note   = s.value("note", "");
+
+            std::cout << "  " << std::setw(16) << name
+                      << std::setw(9)  << wlabel
+                      << std::setw(8)  << used
+                      << std::setw(8)  << limit
+                      << std::setw(14) << bar(pct)
+                      << std::fixed << std::setprecision(1) << pct << "%"
+                      << "  " << note << "\n";
+        }
+    }
+
+    int64_t uptime = j.value("uptime_seconds", (int64_t)0);
+    long long reports = j.value("reports_served", 0LL);
+    long long ss = 0, fc = 0;
+    if (j.contains("tool_calls")) {
+        ss = j["tool_calls"].value("smart_search", 0LL);
+        fc = j["tool_calls"].value("fact_check",   0LL);
+    }
+
+    std::cout << "\n";
+    std::cout << "  Uptime         : " << format_uptime(uptime) << "\n";
+    std::cout << "  Reports served : " << reports << "\n";
+    std::cout << "  Tool calls     : smart_search=" << ss << "  fact_check=" << fc << "\n";
+
+    std::string started = j.value("started_at", "");
+    if (!started.empty())
+        std::cout << "  Stats since    : " << started << "\n";
+    std::cout << "\n";
+}
+
 // ── help ──────────────────────────────────────────────────────────────────────
 
 static void print_help() {
@@ -965,6 +1046,11 @@ static void print_help() {
     rp autostart disable             disable + stop the systemd unit
     rp autostart status              show enabled/active state
 
+  MONITORING
+    rp stats                         show per-source rate limit usage + server stats
+                                     (reads last-written stats file; also available
+                                      via authenticated GET /stats on the API server)
+
 )";
 }
 
@@ -985,6 +1071,7 @@ int main(int argc, char** argv) {
     if (cmd == "stop")                       { cmd_stop();             return 0; }
     if (cmd == "_serve")                     { run_server_foreground(); return 0; }
     if (cmd == "autostart")                  { cmd_autostart(argc, argv); return 0; }
+    if (cmd == "stats")                      { cmd_stats();               return 0; }
     if (cmd == "update")                     { cmd_update();           return 0; }
     if (cmd == "cache")                      { cmd_cache(argc, argv);  return 0; }
     if (cmd == "logs")                       { cmd_logs(argc, argv);   return 0; }

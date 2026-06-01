@@ -24,6 +24,10 @@ fs::path log_path() {
     return config_path().parent_path() / "server.log";
 }
 
+fs::path stats_path() {
+    return config_path().parent_path() / "stats.json";
+}
+
 // ── Load / save ───────────────────────────────────────────────────────────────
 
 Config load_config() {

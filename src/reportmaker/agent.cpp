@@ -1,6 +1,7 @@
 #include "reportmaker/agent.hpp"
 #include "reportmaker/budget.hpp"
 #include "reportmaker/tools.hpp"
+#include "reportmaker/stats.hpp"
 #include "http_client.hpp"
 #include "config.hpp"
 #include <nlohmann/json.hpp>
@@ -359,6 +360,7 @@ std::string run_report(const std::string& query, const AgentConfig& cfg) {
                 catch (...) { tool_args = json::object(); }
 
                 budget.record_tool(tool_name);
+                ServerStats::get().record_tool(tool_name);
                 if (cfg.verbose) std::cout << "  -> tool: " << tool_name << "\n";
                 std::string tool_result = execute_tool(tool_name, tool_args);
                 if (cfg.verbose) {
@@ -384,6 +386,9 @@ std::string run_report(const std::string& query, const AgentConfig& cfg) {
     if (final_text.empty())
         return "[max_iterations=" + std::to_string(cfg.max_iterations) +
                " reached. Budget: " + budget.summary() + "]";
+
+    ServerStats::get().record_report();
+    ServerStats::get().flush();
 
     // Cache the report
     if (cfg.use_cache) {

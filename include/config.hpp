@@ -51,6 +51,7 @@ struct Config {
 fs::path config_path();
 fs::path reports_dir();
 fs::path log_path();
+fs::path stats_path();
 
 // ── Load / save ───────────────────────────────────────────────────────────────
 
