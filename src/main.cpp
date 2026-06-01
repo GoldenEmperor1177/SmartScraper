@@ -1,4 +1,4 @@
-#define APP_VERSION "1.0.8"
+#define APP_VERSION "1.0.9"
 
 #include "config.hpp"
 #include "dns.hpp"
@@ -845,7 +845,20 @@ static void cmd_update() {
     }
 
     run(cleanup_cmd);
-    std::cout << "\n[rp] Updated to v" APP_VERSION ". ✓\n";
+
+    // Read version from the newly installed binary, not this (old) process
+    FILE* fp = popen("rp --version 2>/dev/null", "r");
+    std::string new_version = "?";
+    if (fp) {
+        char buf[64] = {};
+        if (fgets(buf, sizeof(buf), fp)) {
+            new_version = std::string(buf);
+            while (!new_version.empty() && (new_version.back() == '\n' || new_version.back() == '\r'))
+                new_version.pop_back();
+        }
+        pclose(fp);
+    }
+    std::cout << "\n[rp] Updated to " << new_version << ". ✓\n";
 
     if (server_was_running) {
         std::cout << "[rp] Restarting server...\n";
