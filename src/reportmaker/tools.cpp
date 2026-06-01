@@ -1,4 +1,5 @@
 #include "reportmaker/tools.hpp"
+#include "reportmaker/stats.hpp"
 #include "http_client.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -20,10 +21,9 @@ json tool_schemas() {
             {"function", {
                 {"name", "smart_search"},
                 {"description",
-                    "Deep web research on a topic. Searches DuckDuckGo (general web), "
-                    "Wikipedia (factual background), HackerNews (tech news and discussions), "
-                    "StackExchange (technical Q&A), and arXiv (academic papers and research). "
-                    "Returns a markdown digest of the top sources. "
+                    "Deep web research on a topic. Searches DuckDuckGo across the open web — "
+                    "finds news, blogs, market reports, industry data, and reference pages. "
+                    "Returns a markdown digest of the top sources with titles, URLs, and snippets. "
                     "Slower (10-30s) but comprehensive. Use for whole subjects, not single facts."},
                 {"parameters", {
                     {"type", "object"},
@@ -156,208 +156,33 @@ static std::vector<SearchHit> search_duckduckgo(
     return hits;
 }
 
-// ── Wikipedia ────────────────────────────────────────────────────────────────
-
-static std::vector<SearchHit> search_wikipedia(const std::string& query, int limit) {
-    HttpClient http;
-    std::string url = "https://en.wikipedia.org/w/api.php?action=query&list=search"
-                      "&srsearch=" + http.url_encode(query) +
-                      "&srlimit=" + std::to_string(limit) +
-                      "&format=json";
-
-    auto resp = http.get(url, {{"Accept", "application/json"}});
-    if (!resp.ok()) return {};
-
-    std::vector<SearchHit> hits;
-    try {
-        auto j = json::parse(resp.body);
-        for (auto& item : j["query"]["search"]) {
-            SearchHit h;
-            h.title   = item.value("title", "");
-            h.snippet = trim(strip_html_tags(item.value("snippet", "")));
-            h.url    = "https://en.wikipedia.org/wiki/" + http.url_encode(h.title);
-            h.source = "wikipedia";
-            if (!h.title.empty()) hits.push_back(std::move(h));
-        }
-    } catch (...) {}
-    return hits;
-}
-
-// ── HackerNews (Algolia) ─────────────────────────────────────────────────────
-
-static std::vector<SearchHit> search_hackernews(const std::string& query, int limit) {
-    HttpClient http;
-    std::string url = "https://hn.algolia.com/api/v1/search?query=" +
-                      http.url_encode(query) +
-                      "&hitsPerPage=" + std::to_string(limit) +
-                      "&tags=story";
-
-    auto resp = http.get(url);
-    if (!resp.ok()) return {};
-
-    std::vector<SearchHit> hits;
-    try {
-        auto j = json::parse(resp.body);
-        for (auto& hit : j["hits"]) {
-            SearchHit h;
-            h.title   = hit.value("title", "");
-            h.snippet = hit.contains("story_text") && !hit["story_text"].is_null()
-                        ? hit["story_text"].get<std::string>().substr(0, 300) : "";
-            h.url     = hit.contains("url") && !hit["url"].is_null()
-                        ? hit["url"].get<std::string>()
-                        : "https://news.ycombinator.com/item?id=" + hit.value("objectID", "");
-            h.source  = "hackernews";
-            if (!h.title.empty()) hits.push_back(std::move(h));
-        }
-    } catch (...) {}
-    return hits;
-}
-
-// ── StackExchange ─────────────────────────────────────────────────────────────
-
-static std::vector<SearchHit> search_stackexchange(const std::string& query, int limit) {
-    HttpClient http;
-    std::string url = "https://api.stackexchange.com/2.3/search/advanced"
-                      "?q=" + http.url_encode(query) +
-                      "&site=stackoverflow"
-                      "&pagesize=" + std::to_string(std::min(limit, 25)) +
-                      "&order=desc&sort=relevance&filter=withbody";
-
-    auto resp = http.get(url);
-    if (!resp.ok()) return {};
-
-    std::vector<SearchHit> hits;
-    try {
-        auto j = json::parse(resp.body);
-        for (auto& item : j["items"]) {
-            SearchHit h;
-            h.title   = trim(strip_html_tags(item.value("title", "")));
-            std::string body = item.value("body", "");
-            h.snippet = trim(strip_html_tags(body)).substr(0, 300);
-            h.url     = item.value("link", "");
-            h.source  = "stackexchange";
-            if (!h.url.empty()) hits.push_back(std::move(h));
-        }
-    } catch (...) {}
-    return hits;
-}
-
-// ── arXiv ─────────────────────────────────────────────────────────────────────
-// Uses the public Atom API — no key required.
-// https://export.arxiv.org/api/query?search_query=all:<q>&max_results=<n>
-
-static std::string extract_xml_tag(const std::string& xml,
-                                   const std::string& tag,
-                                   std::string::size_type from = 0) {
-    std::string open  = "<" + tag;
-    std::string close = "</" + tag + ">";
-    auto s = xml.find(open, from);
-    if (s == std::string::npos) return "";
-    auto s2 = xml.find('>', s);
-    if (s2 == std::string::npos) return "";
-    auto e = xml.find(close, s2);
-    if (e == std::string::npos) return "";
-    return xml.substr(s2 + 1, e - s2 - 1);
-}
-
-static std::vector<SearchHit> search_arxiv(const std::string& query, int limit) {
-    HttpClient http;
-    http.timeout_sec = 15;
-
-    std::string url = "https://export.arxiv.org/api/query?search_query=all:"
-                      + http.url_encode(query)
-                      + "&max_results=" + std::to_string(std::min(limit, 10))
-                      + "&sortBy=relevance";
-
-    auto resp = http.get(url, {{"Accept", "application/atom+xml"}});
-    if (!resp.ok()) return {};
-
-    std::vector<SearchHit> hits;
-    const std::string& body = resp.body;
-    std::string::size_type pos = 0;
-
-    while (hits.size() < (size_t)limit) {
-        auto entry_start = body.find("<entry>", pos);
-        if (entry_start == std::string::npos) break;
-        auto entry_end = body.find("</entry>", entry_start);
-        if (entry_end == std::string::npos) break;
-
-        std::string entry = body.substr(entry_start, entry_end - entry_start + 8);
-        pos = entry_end + 8;
-
-        SearchHit h;
-        h.title   = trim(extract_xml_tag(entry, "title"));
-        h.snippet = trim(extract_xml_tag(entry, "summary"));
-        if (h.snippet.size() > 500) h.snippet = h.snippet.substr(0, 500) + "...";
-
-        // Prefer the abs link
-        std::string::size_type lpos = 0;
-        while (true) {
-            auto lk = entry.find("<link", lpos);
-            if (lk == std::string::npos) break;
-            auto lend = entry.find("/>", lk);
-            if (lend == std::string::npos) break;
-            std::string ltag = entry.substr(lk, lend - lk + 2);
-            if (ltag.find("rel=\"alternate\"") != std::string::npos ||
-                ltag.find("type=\"text/html\"") != std::string::npos) {
-                auto href = ltag.find("href=\"");
-                if (href != std::string::npos) {
-                    auto vs = href + 6;
-                    auto ve = ltag.find('"', vs);
-                    h.url = ltag.substr(vs, ve - vs);
-                }
-                break;
-            }
-            lpos = lend + 2;
-        }
-        // Fallback to <id> which is also a valid URL
-        if (h.url.empty()) h.url = trim(extract_xml_tag(entry, "id"));
-
-        h.source = "arxiv";
-        if (!h.title.empty() && !h.url.empty())
-            hits.push_back(std::move(h));
-    }
-    return hits;
-}
-
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
 static std::string run_smart_search(const json& args) {
     std::string topic = args.value("topic", "");
     int limit         = args.value("limit", 8);
-    std::string region = args.value("region", "us-en");
+    // Default to worldwide so regional queries (India, etc.) aren't geo-filtered.
+    // Caller passes "in-en" for India-specific queries.
+    std::string region = args.value("region", "wt-wt");
 
     if (topic.empty()) return "ERROR: topic is required";
 
-    // Search all five sources
-    auto ddg   = search_duckduckgo(topic, limit, region);
-    auto wiki  = search_wikipedia(topic, limit / 2 + 1);
-    auto hn    = search_hackernews(topic, limit / 2);
-    auto se    = search_stackexchange(topic, limit / 2);
-    auto ax    = search_arxiv(topic, 5);
+    // DuckDuckGo only: Wikipedia/HackerNews/StackExchange/arXiv return encyclopedic
+    // and tech content that is irrelevant for business, marketing, and domain-specific
+    // research queries. They pollute the digest and cause the agent to report "no results".
+    auto& stats = ServerStats::get();
+    auto ddg = search_duckduckgo(topic, limit, region);
+    stats.record_source("duckduckgo");
+    stats.flush();
 
-    // Merge with URL deduplication
-    std::vector<SearchHit> all;
-    std::set<std::string>  seen_urls;
-    auto dedup_merge = [&](std::vector<SearchHit>& src) {
-        for (auto& h : src)
-            if (!h.url.empty() && seen_urls.insert(h.url).second)
-                all.push_back(h);
-    };
-    dedup_merge(ddg);
-    dedup_merge(wiki);
-    dedup_merge(hn);
-    dedup_merge(se);
-    dedup_merge(ax);
+    if (ddg.empty()) return "smart_search: no results found for: " + topic;
 
-    if (all.empty()) return "smart_search: no results found for: " + topic;
-
-    // Build markdown digest
+    // Build markdown digest from DuckDuckGo results
     std::ostringstream out;
     out << "## Smart Search Digest: " << topic << "\n\n";
-    out << "_" << all.size() << " results from duckduckgo / wikipedia / hackernews / stackexchange / arxiv_\n\n";
+    out << "_" << ddg.size() << " results from duckduckgo_\n\n";
 
-    for (auto& h : all) {
+    for (auto& h : ddg) {
         out << "### [" << (h.title.empty() ? h.url : h.title) << "](" << h.url << ")\n";
         out << "_source: " << h.source << "_\n\n";
         if (!h.snippet.empty()) out << h.snippet << "\n\n";
@@ -394,14 +219,18 @@ static std::string run_fact_check(const json& args) {
         } catch (...) {}
     }
 
-    // Top web results for context
-    auto hits = search_duckduckgo(query, 5, "us-en");
+    // Top web results — use worldwide region so India/regional queries aren't filtered
+    auto hits = search_duckduckgo(query, 5, "wt-wt");
+    ServerStats::get().record_source("duckduckgo");
+    ServerStats::get().flush();
     if (!hits.empty()) {
         out << "**Top web results:**\n\n";
         for (auto& h : hits) {
             out << "- [" << (h.title.empty() ? h.url : h.title) << "](" << h.url << ")\n";
             if (!h.snippet.empty()) out << "  " << h.snippet << "\n";
         }
+    } else {
+        out << "_No web results returned for this query._\n";
     }
 
     return out.str();
