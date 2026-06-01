@@ -1,4 +1,4 @@
-#define APP_VERSION "1.0.7"
+#define APP_VERSION "1.0.8"
 
 #include "config.hpp"
 #include "dns.hpp"
