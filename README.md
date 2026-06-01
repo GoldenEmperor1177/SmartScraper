@@ -136,3 +136,53 @@ Reports cached at `~/.smartscraper/reports/`.
 | nlohmann/json | JSON | auto-fetched by CMake |
 
 No other runtime dependencies. Single binary output.
+
+---
+
+## For AI agents / contributors — critical rules
+
+### Search sources
+`smart_search` uses **DuckDuckGo only** (worldwide region `wt-wt`). Do not add Wikipedia, HackerNews, StackExchange, or arXiv back as sources. They were deliberately removed because:
+- Wikipedia returns encyclopedia articles about companies, not business/marketing data
+- HackerNews and StackExchange are tech forums with no domain-specific research data
+- arXiv is academic papers — irrelevant for most real-world research queries
+
+These sources caused the agent to report zero grounded data for any business or marketing query. DuckDuckGo indexes the full open web including industry reports, blogs, and news — it is the right tool for general research.
+
+The worldwide region (`wt-wt`) is also intentional. `us-en` was the original default and caused India-specific and other regional queries to be geo-filtered, returning no results.
+
+### Versioning
+The version string lives in exactly one place: `src/main.cpp` line 1 — `#define APP_VERSION "x.y.z"`.
+
+**Every commit must bump this string.** If you change any source file and forget to bump `APP_VERSION`, `rp update` will build and install the new binary but report the old version number, which looks broken.
+
+Commit message convention (match existing history):
+```
+v1.0.X — short description of what changed
+```
+
+Tag every release commit:
+```bash
+git tag v1.0.X
+git push origin v1.0.X
+```
+
+### How `rp update` works (bootstrapping caveat)
+`rp update` clones main from GitHub, builds, installs to `/usr/local/bin/rp`, then calls `rp --version` on the newly installed binary to report the result. This means:
+
+- The **first** `rp update` after a fix to the update command itself will still show the old version number (the old binary runs the update, installs the new binary, then exits — the popen call reads the new binary correctly but the old binary's flow already ended)
+- Run `rp update` a **second time** to confirm — the new binary will correctly report its own version
+- `rp --version` always tells you exactly what is currently installed
+
+### Files that must all be committed together
+When making changes, these files are commonly modified together. Do **not** commit `tools.cpp` alone without checking whether the others need to go with it — a partial commit will break the build on `rp update`:
+
+| File | What it contains |
+|------|-----------------|
+| `src/main.cpp` | Version string + all CLI commands |
+| `src/reportmaker/tools.cpp` | `smart_search` and `fact_check` tool implementations |
+| `src/reportmaker/agent.cpp` | Agentic loop, system prompt, tool dispatch |
+| `src/reportmaker/stats.cpp` | Rate-limit tracking, server stats persistence |
+| `include/reportmaker/stats.hpp` | Stats header — must be present or build fails |
+| `src/server.cpp` | HTTP API server |
+| `src/config.cpp` / `include/config.hpp` | Config load/save |
